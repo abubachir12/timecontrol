@@ -1,7 +1,6 @@
 """
 server.py — TimeControl API Server
-Принимает данные от агента, раздаёт задачи, отдаёт статистику.
-Запускается вместе с main.py через systemd.
+Многопользовательская версия.
 """
 
 import os
@@ -15,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 DB_PATH = "tracker.db"
 
-app = FastAPI(title="TimeControl API", version="1.0")
+app = FastAPI(title="TimeControl API", version="2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,14 +34,18 @@ async def health():
 
 # ══════════════════════════════════════════
 #  2. ПРИЁМ СТАТИСТИКИ ОТ АГЕНТА
+#     Агент передаёт user_id в каждом запросе
 # ══════════════════════════════════════════
 @app.post("/api/update")
 async def update_stats(request: Request):
     try:
         data     = await request.json()
+        user_id  = int(data.get("user_id", 0))
         name     = str(data.get("name", "Неизвестно"))[:100]
         duration = int(data.get("duration", 0))
 
+        if not user_id:
+            return JSONResponse({"status": "error", "message": "user_id required"}, status_code=400)
         if duration <= 0:
             return {"status": "skipped"}
 
@@ -50,14 +53,18 @@ async def update_stats(request: Request):
         ts    = time.time()
 
         async with aiosqlite.connect(DB_PATH) as db:
+            # Создаём пользователя если нет
             await db.execute(
-                "INSERT INTO activity (window_name, duration, date, timestamp) "
-                "VALUES (?,?,?,?)",
-                (name, duration, today, ts),
+                "INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,)
+            )
+            await db.execute(
+                "INSERT INTO activity (user_id, window_name, duration, date, timestamp) "
+                "VALUES (?,?,?,?,?)",
+                (user_id, name, duration, today, ts),
             )
             await db.commit()
 
-        print(f"[DATA] {name[:40]} — {duration}s")
+        print(f"[DATA] uid={user_id} | {name[:30]} — {duration}s")
         return {"status": "ok"}
     except Exception as e:
         print(f"[ERROR] /api/update: {e}")
@@ -65,14 +72,18 @@ async def update_stats(request: Request):
 
 
 # ══════════════════════════════════════════
-#  3. ЗАДАЧИ (скриншот / выключение)
+#  3. ЗАДАЧИ — получить задачу для агента
 # ══════════════════════════════════════════
 @app.get("/api/get_task")
-async def get_task():
+async def get_task(user_id: int = 0):
+    if not user_id:
+        return {"task": None, "error": "user_id required"}
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
-                "SELECT id, command FROM tasks WHERE status='pending' LIMIT 1"
+                "SELECT id, command FROM tasks "
+                "WHERE user_id=? AND status='pending' LIMIT 1",
+                (user_id,)
             ) as c:
                 row = await c.fetchone()
         if row:
@@ -99,7 +110,6 @@ async def complete_task(request: Request):
 
 @app.post("/api/check_cancel")
 async def check_cancel(request: Request):
-    """Агент спрашивает: отменил ли пользователь shutdown?"""
     try:
         data = await request.json()
         tid  = data.get("id")
@@ -116,17 +126,18 @@ async def check_cancel(request: Request):
 
 
 # ══════════════════════════════════════════
-#  4. ЗАГРУЗКА СКРИНШОТА
+#  4. СКРИНШОТ — сохраняем с user_id в имени
 # ══════════════════════════════════════════
 @app.post("/api/upload_screen")
-async def upload_screen(file: UploadFile = File(...)):
+async def upload_screen(request: Request, file: UploadFile = File(...)):
     try:
-        content    = await file.read()
-        # Сохраняем рядом с БД — main.py найдёт файл там же
-        save_path  = os.path.join(os.path.dirname(DB_PATH), "remote_screen.png")
+        user_id = request.query_params.get("user_id", "0")
+        content = await file.read()
+        # Сохраняем как screen_{user_id}.png — бот найдёт по этому имени
+        save_path = f"screen_{user_id}.png"
         with open(save_path, "wb") as f:
             f.write(content)
-        print(f"[SCREEN] Скриншот сохранён ({len(content) // 1024} KB)")
+        print(f"[SCREEN] uid={user_id} ({len(content) // 1024} KB)")
         return {"status": "ok"}
     except Exception as e:
         print(f"[ERROR] /api/upload_screen: {e}")
@@ -134,39 +145,28 @@ async def upload_screen(file: UploadFile = File(...)):
 
 
 # ══════════════════════════════════════════
-#  5. СТАТИСТИКА ДЛЯ МИНИ-ПРИЛОЖЕНИЯ
+#  5. СТАТИСТИКА для конкретного пользователя
 # ══════════════════════════════════════════
 @app.get("/api/stats")
-async def get_stats():
+async def get_stats(user_id: int = 0):
+    if not user_id:
+        return JSONResponse({"error": "user_id required"}, status_code=400)
     try:
         today = datetime.now().strftime("%Y-%m-%d")
-
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
-                "SELECT value FROM settings WHERE key='work_apps'"
+                "SELECT work_apps, fun_apps FROM users WHERE user_id=?", (user_id,)
             ) as c:
-                r = await c.fetchone()
-            work_list = r[0].split(",") if r else []
-
-            async with db.execute(
-                "SELECT value FROM settings WHERE key='fun_apps'"
-            ) as c:
-                r = await c.fetchone()
-            fun_list = r[0].split(",") if r else []
+                row = await c.fetchone()
+            work_list = row[0].split(",") if row and row[0] else []
+            fun_list  = row[1].split(",") if row and row[1] else []
 
             async with db.execute(
                 "SELECT window_name, SUM(duration) AS s FROM activity "
-                "WHERE date=? GROUP BY window_name ORDER BY s DESC",
-                (today,),
+                "WHERE user_id=? AND date=? GROUP BY window_name ORDER BY s DESC",
+                (user_id, today),
             ) as c:
                 all_rows = await c.fetchall()
-
-            async with db.execute(
-                "SELECT date, SUM(duration) FROM activity "
-                "WHERE date >= date('now','-6 days') "
-                "GROUP BY date ORDER BY date ASC"
-            ) as c:
-                week_rows = await c.fetchall()
 
         total = work = fun = 0
         for name, dur in all_rows:
@@ -175,19 +175,17 @@ async def get_stats():
             if any(w in low for w in work_list if w): work += dur
             elif any(f in low for f in fun_list if f): fun += dur
 
-        h, m   = divmod(total // 60, 60)
-        top    = all_rows[:8]
+        h, m = divmod(total // 60, 60)
+        top  = all_rows[:8]
 
         return {
-            "total_h":    h,
-            "total_m":    m,
-            "work_min":   work  // 60,
-            "fun_min":    fun   // 60,
-            "other_min":  (total - work - fun) // 60,
-            "labels":     [r[0].split("—")[0].split("-")[0].strip()[:20] for r in top],
-            "values":     [r[1] // 60 for r in top],
-            "week_labels": [r[0][5:] for r in week_rows],
-            "week_values": [r[1] // 60 for r in week_rows],
+            "total_h":  h,
+            "total_m":  m,
+            "work_min": work  // 60,
+            "fun_min":  fun   // 60,
+            "other_min": (total - work - fun) // 60,
+            "labels":   [r[0].split("—")[0].strip()[:20] for r in top],
+            "values":   [r[1] // 60 for r in top],
         }
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -198,4 +196,5 @@ async def get_stats():
 # ══════════════════════════════════════════
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
+    print(f"▶ TimeControl API запущен на порту {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
