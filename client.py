@@ -22,7 +22,6 @@ SEND_MIN_SECS = 3
 ID_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "user_id.txt")
 
 def get_user_id() -> int:
-    # Если уже сохранён — просто читаем
     if os.path.exists(ID_FILE):
         try:
             uid = int(open(ID_FILE).read().strip())
@@ -38,8 +37,6 @@ def get_user_id() -> int:
     print("Открой Telegram и напиши боту /start")
     print("Бот пришлёт тебе твой ID автоматически.")
     print()
-    
-    # Ждём пока пользователь введёт ID
     while True:
         try:
             uid = int(input("Введи ID который прислал бот: ").strip())
@@ -49,6 +46,9 @@ def get_user_id() -> int:
                 return uid
         except ValueError:
             print("❌ Введи число!")
+
+# ВОТ ЭТА СТРОКА — сразу после функции, до всего остального
+USER_ID = get_user_id()
 
 # ════════════════════════════════════════
 #  ОПРЕДЕЛЕНИЕ ОС
