@@ -150,8 +150,8 @@ async def build_settings_kb(user_id: int) -> InlineKeyboardMarkup:
 # ══════════════════════════════════════════
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    uid  = message.from_user.id
-    name = message.from_user.first_name or ""
+    uid   = message.from_user.id
+    name  = message.from_user.first_name or ""
     uname = message.from_user.username or ""
     await ensure_user(uid, uname, name)
 
@@ -170,6 +170,14 @@ async def cmd_start(message: types.Message):
         "3️⃣ Пользуйся кнопками!"
     )
     await message.answer(text, reply_markup=MAIN_KB, parse_mode="HTML")
+
+    # Отправляем ID пользователю
+    await message.answer(
+        f"🆔 Твой Telegram ID для агента: <code>{uid}</code>\n"
+        f"Скопируй его и вставь при первом запуске агента на ПК.",
+        parse_mode="HTML"
+    )
+
     if AGENT_FILE_ID:
         try:
             await bot.send_document(
