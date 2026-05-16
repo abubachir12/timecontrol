@@ -98,12 +98,16 @@ def get_task() -> dict | None:
             timeout=3,
             headers={
                 "bypass-tunnel-reminder": "true",
-                "User-Agent": "TimeControl-Agent/1.0"
+                "User-Agent": "TimeControl-Agent/1.0",
+                "Accept": "application/json"
             }
         )
         if r.status_code == 200:
-            data = r.json()
-            return data.get("task")
+            try:
+                data = r.json()
+                return data.get("task")
+            except Exception:
+                return None
     except Exception:
         pass
     return None
