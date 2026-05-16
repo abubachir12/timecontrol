@@ -50,7 +50,6 @@ REMINDER_TICKS = 360   # 360 × 10 сек = 60 минут (меняется че
 #  БАЗА ДАННЫХ
 # ══════════════════════════════════════════
 async def init_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript("""
             CREATE TABLE IF NOT EXISTS activity (
