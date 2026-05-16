@@ -26,7 +26,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 #  НАСТРОЙКИ
 # ══════════════════════════════════════════
 API_TOKEN     = "8180368862:AAF7X17HFyhbWkPNpt2ib-13KPiR19YGAJE"
-AGENT_FILE_ID = ""
+AGENT_FILE_ID = "BQACAgIAAxkBAAIDemoIo1lH8JDrpVW1XFtYD90VV0NEAAJarQACqpNISGsIzkhjSf9uOwQ"
 DB_PATH       = "tracker.db"
 
 SUPPORT_TIPS = [
