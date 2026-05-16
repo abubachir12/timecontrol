@@ -1,0 +1,17 @@
+# Файл: /etc/systemd/system/timecontrol-bot.service
+[Unit]
+Description=TimeControl Telegram Bot
+After=network.target timecontrol-server.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/timecontrol
+ExecStart=/root/timecontrol/venv/bin/python main.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

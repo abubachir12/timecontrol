@@ -1,0 +1,4 @@
+requests==2.32.3
+mss==9.0.2
+pynput==1.7.7
+pygetwindow==0.0.9

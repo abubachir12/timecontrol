@@ -1,0 +1,17 @@
+# Файл: /etc/systemd/system/timecontrol-server.service
+[Unit]
+Description=TimeControl API Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/timecontrol
+ExecStart=/root/timecontrol/venv/bin/python server.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
