@@ -2,7 +2,7 @@
 server.py — TimeControl API Server
 Многопользовательская версия.
 """
-
+import sqlite3 as _sqlite3
 import os
 import aiosqlite
 import time
@@ -13,6 +13,25 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 DB_PATH = "tracker.db"
+
+def _migrate():
+    """Добавляет user_id в старые таблицы если их нет"""
+    conn = _sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    # Проверяем колонки activity
+    cur.execute("PRAGMA table_info(activity)")
+    cols = [r[1] for r in cur.fetchall()]
+    if "user_id" not in cols and len(cols) > 0:
+        cur.execute("ALTER TABLE activity ADD COLUMN user_id INTEGER DEFAULT 0")
+    # Проверяем колонки tasks
+    cur.execute("PRAGMA table_info(tasks)")
+    cols = [r[1] for r in cur.fetchall()]
+    if "user_id" not in cols and len(cols) > 0:
+        cur.execute("ALTER TABLE tasks ADD COLUMN user_id INTEGER DEFAULT 0")
+    conn.commit()
+    conn.close()
+
+_migrate()
 
 app = FastAPI(title="TimeControl API", version="2.0")
 
