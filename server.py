@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-DB_PATH = "/root/timecontrol/tracker.db"
+DB_PATH = "tracker.db"
 
 app = FastAPI(title="TimeControl API", version="1.0")
 

@@ -27,7 +27,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # ══════════════════════════════════════════
 API_TOKEN     = "8180368862:AAF7X17HFyhbWkPNpt2ib-13KPiR19YGAJE"   # получи у @BotFather
 AGENT_FILE_ID = ""                    # вставь после загрузки .exe боту (см. гайд)
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracker.db")
+DB_PATH = "tracker.db"
 
 # ══════════════════════════════════════════
 #  КОНСТАНТЫ
