@@ -27,7 +27,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # ══════════════════════════════════════════
 #  НАСТРОЙКИ
 # ══════════════════════════════════════════
-API_TOKEN     = "ВСТАВЬ_ТОКЕН_БОТА"
+API_TOKEN     = "8180368862:AAF7X17HFyhbWkPNpt2ib-13KPiR19YGAJE"
 AGENT_FILE_ID = ""
 DB_PATH       = "tracker.db"
 SERVER_URL    = f"http://localhost:{os.environ.get('PORT', 8000)}"
