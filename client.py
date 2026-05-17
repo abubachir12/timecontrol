@@ -1,7 +1,7 @@
 """
 client.py — TimeControl Agent
-Многопользовательская версия.
-Каждый пользователь вводит свой Telegram user_id при первом запуске.
+Многопользовательская версия с пингом сервера.
+Напоминания приходят только пока агент активен.
 """
 
 import time
@@ -13,11 +13,12 @@ import requests
 #  НАСТРОЙКИ
 # ════════════════════════════════════════
 SERVER_URL    = "https://web-production-583b7.up.railway.app"
-POLL_INTERVAL = 5
-SEND_MIN_SECS = 3
+POLL_INTERVAL = 5    # тиков между проверкой команд
+PING_INTERVAL = 30   # тиков между пингами (30 × 1 сек = 30 сек)
+SEND_MIN_SECS = 3    # минимальная длина сессии для отправки
 
 # ════════════════════════════════════════
-#  ПОЛУЧИТЬ USER_ID АВТОМАТИЧЕСКИ
+#  ПОЛУЧИТЬ USER_ID
 # ════════════════════════════════════════
 ID_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "user_id.txt")
 
@@ -34,20 +35,20 @@ def get_user_id() -> int:
     print("  Первый запуск TimeControl Agent")
     print("=" * 44)
     print()
-    print("Открой Telegram и напиши боту /start")
-    print("Бот пришлёт тебе твой ID автоматически.")
+    print("1. Открой Telegram")
+    print("2. Напиши боту /start")
+    print("3. Бот пришлёт твой ID (число)")
     print()
     while True:
         try:
-            uid = int(input("Введи ID который прислал бот: ").strip())
+            uid = int(input("Введи свой Telegram ID: ").strip())
             if uid > 0:
                 open(ID_FILE, "w").write(str(uid))
-                print(f"✅ Готово! ID сохранён.")
+                print(f"✅ ID сохранён: {uid}")
                 return uid
         except ValueError:
             print("❌ Введи число!")
 
-# ВОТ ЭТА СТРОКА — сразу после функции, до всего остального
 USER_ID = get_user_id()
 
 # ════════════════════════════════════════
@@ -56,13 +57,23 @@ USER_ID = get_user_id()
 IS_WINDOWS = sys.platform == "win32"
 
 if IS_WINDOWS:
-    import pygetwindow as gw
+    try:
+        import pygetwindow as gw
+        GW_OK = True
+    except Exception:
+        GW_OK = False
+else:
+    GW_OK = False
 
 try:
-    from mss import mss as mss_lib
+    from mss import MSS as mss_lib
     MSS_OK = True
-except Exception:
-    MSS_OK = False
+except ImportError:
+    try:
+        from mss import mss as mss_lib
+        MSS_OK = True
+    except Exception:
+        MSS_OK = False
 
 # ════════════════════════════════════════
 #  AFK-ДЕТЕКТОР
@@ -94,7 +105,7 @@ except Exception as e:
 #  АКТИВНОЕ ОКНО
 # ════════════════════════════════════════
 def get_active_window() -> str:
-    if not IS_WINDOWS:
+    if not GW_OK:
         return "Неизвестно"
     try:
         w = gw.getActiveWindow()
@@ -112,6 +123,19 @@ HEADERS = {
     "Content-Type": "application/json",
     "User-Agent":   "TimeControl-Agent/2.0",
 }
+
+
+def send_ping():
+    """Сообщаем серверу что агент онлайн"""
+    try:
+        requests.post(
+            f"{SERVER_URL}/api/ping",
+            json={"user_id": USER_ID},
+            timeout=3,
+            headers=HEADERS,
+        )
+    except Exception:
+        pass
 
 
 def send_activity(name: str, duration: int) -> bool:
@@ -184,8 +208,8 @@ def upload_screenshot() -> bool:
             r = requests.post(
                 f"{SERVER_URL}/api/upload_screen",
                 params={"user_id": USER_ID},
-                files={"file": f},
-                timeout=10,
+                files={"file": ("screen.png", f, "image/png")},
+                timeout=15,
             )
         return r.status_code == 200
     except Exception as e:
@@ -243,27 +267,41 @@ def main():
     current_window = get_active_window()
     window_start   = time.time()
     cmd_tick       = 0
+    ping_tick      = 0
+
+    # Первый пинг сразу при запуске
+    send_ping()
 
     while True:
         try:
-            cmd_tick += 1
+            cmd_tick  += 1
+            ping_tick += 1
+
+            # ── Пинг сервера ─────────────────────
+            if ping_tick >= PING_INTERVAL:
+                ping_tick = 0
+                send_ping()
+
+            # ── Команды с сервера ─────────────────
             if cmd_tick >= POLL_INTERVAL:
                 cmd_tick = 0
                 task = get_task()
                 if task:
                     handle_task(task)
 
+            # ── AFK ───────────────────────────────
             if _is_afk():
                 time.sleep(1)
                 current_window = get_active_window()
                 window_start   = time.time()
                 continue
 
+            # ── Трекинг окон ──────────────────────
             new_window = get_active_window()
             if new_window != current_window:
                 duration = int(time.time() - window_start)
                 if duration >= SEND_MIN_SECS and current_window:
-                    ok = send_activity(current_window, duration)
+                    ok     = send_activity(current_window, duration)
                     status = "✓" if ok else "✗"
                     print(f"[{status}] {current_window[:40]} — {duration}s")
                 current_window = new_window

@@ -1,32 +1,38 @@
 """
 server.py — TimeControl API Server
-Многопользовательская версия.
+Многопользовательская версия с отслеживанием онлайн-статуса агента.
 """
-import sqlite3 as _sqlite3
+
 import os
-import aiosqlite
 import time
+import aiosqlite
 from datetime import datetime
 import uvicorn
+import requests
 from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 DB_PATH = "tracker.db"
 
+# Онлайн-статус агентов: user_id -> timestamp последнего пинга
+_agent_online: dict[int, float] = {}
+AGENT_TIMEOUT = 60  # секунд без пинга = офлайн
+
+
+import sqlite3 as _sqlite3
+
 def _migrate():
     """Добавляет user_id в старые таблицы если их нет"""
     conn = _sqlite3.connect(DB_PATH)
     cur  = conn.cursor()
-    # Проверяем колонки activity
     cur.execute("PRAGMA table_info(activity)")
     cols = [r[1] for r in cur.fetchall()]
-    if "user_id" not in cols and len(cols) > 0:
+    if cols and "user_id" not in cols:
         cur.execute("ALTER TABLE activity ADD COLUMN user_id INTEGER DEFAULT 0")
-    # Проверяем колонки tasks
     cur.execute("PRAGMA table_info(tasks)")
     cols = [r[1] for r in cur.fetchall()]
-    if "user_id" not in cols and len(cols) > 0:
+    if cols and "user_id" not in cols:
         cur.execute("ALTER TABLE tasks ADD COLUMN user_id INTEGER DEFAULT 0")
     conn.commit()
     conn.close()
@@ -52,8 +58,29 @@ async def health():
 
 
 # ══════════════════════════════════════════
-#  2. ПРИЁМ СТАТИСТИКИ ОТ АГЕНТА
-#     Агент передаёт user_id в каждом запросе
+#  2. ПИНГ — агент сообщает что он онлайн
+# ══════════════════════════════════════════
+@app.post("/api/ping")
+async def agent_ping(request: Request):
+    try:
+        data    = await request.json()
+        user_id = int(data.get("user_id", 0))
+        if user_id:
+            _agent_online[user_id] = time.time()
+        return {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/is_online")
+async def is_online(user_id: int = 0):
+    last   = _agent_online.get(user_id, 0)
+    online = (time.time() - last) < AGENT_TIMEOUT
+    return {"online": online}
+
+
+# ══════════════════════════════════════════
+#  3. ПРИЁМ СТАТИСТИКИ ОТ АГЕНТА
 # ══════════════════════════════════════════
 @app.post("/api/update")
 async def update_stats(request: Request):
@@ -72,7 +99,6 @@ async def update_stats(request: Request):
         ts    = time.time()
 
         async with aiosqlite.connect(DB_PATH) as db:
-            # Создаём пользователя если нет
             await db.execute(
                 "INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,)
             )
@@ -91,12 +117,12 @@ async def update_stats(request: Request):
 
 
 # ══════════════════════════════════════════
-#  3. ЗАДАЧИ — получить задачу для агента
+#  4. ЗАДАЧИ
 # ══════════════════════════════════════════
 @app.get("/api/get_task")
 async def get_task(user_id: int = 0):
     if not user_id:
-        return {"task": None, "error": "user_id required"}
+        return {"task": None}
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
@@ -145,14 +171,13 @@ async def check_cancel(request: Request):
 
 
 # ══════════════════════════════════════════
-#  4. СКРИНШОТ — сохраняем с user_id в имени
+#  5. СКРИНШОТ
 # ══════════════════════════════════════════
 @app.post("/api/upload_screen")
 async def upload_screen(request: Request, file: UploadFile = File(...)):
     try:
-        user_id = request.query_params.get("user_id", "0")
-        content = await file.read()
-        # Сохраняем как screen_{user_id}.png — бот найдёт по этому имени
+        user_id  = request.query_params.get("user_id", "0")
+        content  = await file.read()
         save_path = f"screen_{user_id}.png"
         with open(save_path, "wb") as f:
             f.write(content)
@@ -164,7 +189,7 @@ async def upload_screen(request: Request, file: UploadFile = File(...)):
 
 
 # ══════════════════════════════════════════
-#  5. СТАТИСТИКА для конкретного пользователя
+#  6. СТАТИСТИКА
 # ══════════════════════════════════════════
 @app.get("/api/stats")
 async def get_stats(user_id: int = 0):
@@ -190,21 +215,21 @@ async def get_stats(user_id: int = 0):
         total = work = fun = 0
         for name, dur in all_rows:
             total += dur
-            low    = name.lower()
-            if any(w in low for w in work_list if w): work += dur
-            elif any(f in low for f in fun_list if f): fun += dur
+            low = name.lower()
+            if any(w in low for w in work_list if w):  work += dur
+            elif any(f in low for f in fun_list if f): fun  += dur
 
         h, m = divmod(total // 60, 60)
         top  = all_rows[:8]
 
         return {
-            "total_h":  h,
-            "total_m":  m,
-            "work_min": work  // 60,
-            "fun_min":  fun   // 60,
+            "total_h":   h,
+            "total_m":   m,
+            "work_min":  work  // 60,
+            "fun_min":   fun   // 60,
             "other_min": (total - work - fun) // 60,
-            "labels":   [r[0].split("—")[0].strip()[:20] for r in top],
-            "values":   [r[1] // 60 for r in top],
+            "labels":    [r[0].split("—")[0].strip()[:20] for r in top],
+            "values":    [r[1] // 60 for r in top],
         }
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

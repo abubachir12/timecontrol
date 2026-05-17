@@ -1,12 +1,14 @@
 """
 main.py — TimeControl Telegram Bot
-Многопользовательская версия — каждый видит свою статистику.
+Многопользовательская версия.
+Напоминания приходят только когда агент активен на ПК пользователя.
 """
 
 import asyncio
 import aiosqlite
 import os
 import random
+import requests
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F, html
 from aiogram.filters import Command
@@ -25,9 +27,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # ══════════════════════════════════════════
 #  НАСТРОЙКИ
 # ══════════════════════════════════════════
-API_TOKEN     = "8180368862:AAF7X17HFyhbWkPNpt2ib-13KPiR19YGAJE"
-AGENT_FILE_ID = "BQACAgIAAxkBAAIDlmoIp98EmlZ47riWYSRwL-dfTKUsAAKHrQACqpNISO-_rSYl4LAYOwQ"
+API_TOKEN     = "ВСТАВЬ_ТОКЕН_БОТА"
+AGENT_FILE_ID = ""
 DB_PATH       = "tracker.db"
+SERVER_URL    = f"http://localhost:{os.environ.get('PORT', 8000)}"
 
 SUPPORT_TIPS = [
     "💧 Выпей стакан воды — твоё тело скажет спасибо!",
@@ -40,7 +43,7 @@ SUPPORT_TIPS = [
     "🕐 Работаешь больше часа? Сделай 5-минутный перерыв.",
 ]
 
-REMINDER_TICKS = 360
+REMINDER_TICKS = 360  # 360 × 10 сек = 60 минут
 
 
 # ══════════════════════════════════════════
@@ -58,27 +61,26 @@ async def init_db():
                 timestamp   REAL    NOT NULL
             );
             CREATE TABLE IF NOT EXISTS users (
-                user_id     INTEGER PRIMARY KEY,
-                username    TEXT,
-                first_name  TEXT,
-                afk_seconds INTEGER DEFAULT 180,
-                reminders   INTEGER DEFAULT 1,
+                user_id           INTEGER PRIMARY KEY,
+                username          TEXT,
+                first_name        TEXT,
+                afk_seconds       INTEGER DEFAULT 180,
+                reminders         INTEGER DEFAULT 1,
                 reminder_interval INTEGER DEFAULT 60,
-                work_apps   TEXT DEFAULT 'code,pycharm,visualstudio,word,excel,figma,photoshop,notion',
-                fun_apps    TEXT DEFAULT 'youtube,vk,telegram,steam,dota,csgo,netflix,discord,twitch'
+                work_apps         TEXT DEFAULT 'code,pycharm,visualstudio,word,excel,figma,photoshop,notion',
+                fun_apps          TEXT DEFAULT 'youtube,vk,telegram,steam,dota,csgo,netflix,discord,twitch'
             );
             CREATE TABLE IF NOT EXISTS tasks (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id     INTEGER NOT NULL,
-                command     TEXT    NOT NULL,
-                status      TEXT    NOT NULL DEFAULT 'pending'
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                command TEXT    NOT NULL,
+                status  TEXT    NOT NULL DEFAULT 'pending'
             );
         """)
         await db.commit()
 
 
 async def ensure_user(user_id: int, username: str = "", first_name: str = ""):
-    """Создаёт пользователя если его нет"""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT OR IGNORE INTO users (user_id, username, first_name) VALUES (?,?,?)",
@@ -107,6 +109,19 @@ async def set_user(user_id: int, key: str, value):
         await db.commit()
 
 
+def is_agent_online(user_id: int) -> bool:
+    """Проверяет онлайн ли агент пользователя через API сервера"""
+    try:
+        r = requests.get(
+            f"{SERVER_URL}/api/is_online",
+            params={"user_id": user_id},
+            timeout=3,
+        )
+        return r.json().get("online", False)
+    except Exception:
+        return False
+
+
 # ══════════════════════════════════════════
 #  БОТ
 # ══════════════════════════════════════════
@@ -123,7 +138,7 @@ class Form(StatesGroup):
 MAIN_KB = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📊 Статистика")],
-        [KeyboardButton(text="📸 Скриншот"),    KeyboardButton(text="⚙️ Настройки")],
+        [KeyboardButton(text="📸 Скриншот"),     KeyboardButton(text="⚙️ Настройки")],
         [KeyboardButton(text="🚨 Выключить ПК"), KeyboardButton(text="❌ Отмена выключения")],
     ],
     resize_keyboard=True,
@@ -131,17 +146,17 @@ MAIN_KB = ReplyKeyboardMarkup(
 
 
 async def build_settings_kb(user_id: int) -> InlineKeyboardMarkup:
-    u = await get_user(user_id)
+    u        = await get_user(user_id)
     afk_min  = (u.get("afk_seconds") or 180) // 60
     rem_flag = u.get("reminders", 1)
     interval = u.get("reminder_interval", 60)
     rem_icon = "✅ Вкл" if rem_flag == 1 else "❌ Выкл"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"⏰ AFK-порог: {afk_min} мин",          callback_data="cfg_afk")],
-        [InlineKeyboardButton(text=f"🔔 Уведомления: {rem_icon}",            callback_data="cfg_rem")],
-        [InlineKeyboardButton(text=f"🕑 Интервал: каждые {interval} мин",   callback_data="cfg_interval")],
-        [InlineKeyboardButton(text="💼 Список «Работа»",                     callback_data="cfg_work")],
-        [InlineKeyboardButton(text="🎮 Список «Развлечения»",                callback_data="cfg_fun")],
+        [InlineKeyboardButton(text=f"⏰ AFK-порог: {afk_min} мин",        callback_data="cfg_afk")],
+        [InlineKeyboardButton(text=f"🔔 Уведомления: {rem_icon}",          callback_data="cfg_rem")],
+        [InlineKeyboardButton(text=f"🕑 Интервал: каждые {interval} мин", callback_data="cfg_interval")],
+        [InlineKeyboardButton(text="💼 Список «Работа»",                   callback_data="cfg_work")],
+        [InlineKeyboardButton(text="🎮 Список «Развлечения»",              callback_data="cfg_fun")],
     ])
 
 
@@ -167,11 +182,12 @@ async def cmd_start(message: types.Message):
         "🚀 <b>Как начать:</b>\n"
         "1️⃣ Скачай агента ниже\n"
         "2️⃣ Запусти на своём ПК\n"
-        "3️⃣ Пользуйся кнопками!"
+        "3️⃣ Введи свой ID когда агент попросит\n"
+        "4️⃣ Пользуйся кнопками!"
     )
     await message.answer(text, reply_markup=MAIN_KB, parse_mode="HTML")
 
-    # Отправляем ID пользователю
+    # Присылаем ID пользователю
     await message.answer(
         f"🆔 Твой Telegram ID для агента: <code>{uid}</code>\n"
         f"Скопируй его и вставь при первом запуске агента на ПК.",
@@ -229,8 +245,8 @@ async def cmd_stats(message: types.Message):
     work_s = fun_s = other_s = 0
     lines  = []
     for name, dur in rows:
-        low  = name.lower()
-        mins = dur // 60
+        low   = name.lower()
+        mins  = dur // 60
         clean = name.split("—")[0].split("-")[0].strip()[:30].capitalize()
         lines.append(f"  ▸ {html.bold(clean)} — {mins} мин.")
         if any(w in low for w in w_list if w):   work_s  += dur
@@ -333,7 +349,7 @@ async def cmd_settings(message: types.Message):
 
 @dp.callback_query(F.data == "cfg_afk")
 async def cb_afk(callback: CallbackQuery, state: FSMContext):
-    u = await get_user(callback.from_user.id)
+    u   = await get_user(callback.from_user.id)
     val = (u.get("afk_seconds") or 180) // 60
     await callback.message.answer(
         f"⏰ AFK-порог сейчас: <b>{val} мин</b>\n\n"
@@ -370,6 +386,7 @@ async def cb_rem(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "cfg_interval")
 async def cb_interval(callback: CallbackQuery):
+    global REMINDER_TICKS
     uid     = callback.from_user.id
     u       = await get_user(uid)
     options = [30, 45, 60, 90, 120]
@@ -377,6 +394,7 @@ async def cb_interval(callback: CallbackQuery):
     idx     = options.index(cur) if cur in options else 2
     new     = options[(idx + 1) % len(options)]
     await set_user(uid, "reminder_interval", new)
+    REMINDER_TICKS = new * 6
     await callback.message.edit_reply_markup(reply_markup=await build_settings_kb(uid))
     await callback.answer(f"Интервал: каждые {new} мин")
 
@@ -436,11 +454,17 @@ async def _edit_list(message: types.Message, state: FSMContext):
         else:
             reply = f"⚠️ Не найдено."
     else:
-        await message.answer("❌ Формат: <code>+имя</code>, <code>-имя</code> или <code>сброс</code>", parse_mode="HTML")
+        await message.answer(
+            "❌ Формат: <code>+имя</code>, <code>-имя</code> или <code>сброс</code>",
+            parse_mode="HTML"
+        )
         return
 
     await set_user(uid, db_key, ",".join(filter(bool, apps)))
-    await message.answer(f"{reply}\n📋 <code>{','.join(filter(bool, apps))}</code>", parse_mode="HTML")
+    await message.answer(
+        f"{reply}\n📋 <code>{','.join(filter(bool, apps))}</code>",
+        parse_mode="HTML"
+    )
     await state.clear()
 
 
@@ -460,7 +484,7 @@ async def bg_worker():
         await asyncio.sleep(10)
         tick += 1
 
-        # Скриншоты для каждого пользователя
+        # ── Скриншоты ─────────────────────
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute("SELECT DISTINCT user_id FROM users") as c:
                 user_ids = [r[0] for r in await c.fetchall()]
@@ -480,19 +504,22 @@ async def bg_worker():
                     try: os.remove(screen)
                     except OSError: pass
 
-        # Напоминания
+        # ── Напоминания — только онлайн пользователям ──
         if tick >= REMINDER_TICKS:
             tick = 0
             async with aiosqlite.connect(DB_PATH) as db:
                 async with db.execute(
-                    "SELECT user_id, reminders FROM users WHERE reminders=1"
+                    "SELECT user_id FROM users WHERE reminders=1"
                 ) as c:
                     remind_users = [r[0] for r in await c.fetchall()]
+
             for uid in remind_users:
-                try:
-                    await bot.send_message(uid, random.choice(SUPPORT_TIPS))
-                except Exception:
-                    pass
+                # Проверяем онлайн ли агент через API
+                if is_agent_online(uid):
+                    try:
+                        await bot.send_message(uid, random.choice(SUPPORT_TIPS))
+                    except Exception:
+                        pass
 
 
 # ══════════════════════════════════════════
